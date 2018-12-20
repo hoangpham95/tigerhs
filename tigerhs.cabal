@@ -18,7 +18,7 @@ cabal-version:       >=1.10
 executable tigerhs
   main-is:             Main.hs
   other-modules:
-    Lexer       
+    TigerLexer       
   -- other-extensions:    
   build-depends:       base >=4.9 && <4.10, array
   -- hs-source-dirs:      

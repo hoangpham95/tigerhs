@@ -1,15 +1,9 @@
 {
-  -- Top level: declare module name and imports
+module TigerLexer ( runAlex ) where
 
-  module Lexer (
-    Token(..), 
-    AlexPosn(..), 
-    alexScanTokens, 
-    token_posn
-  ) where
-
-  import Prelude hiding ( GT, LT, EQ )
-  import Data.Maybe
+import Prelude hiding ( GT, LT, EQ )
+import Data.Maybe
+import Control.Monad
 }
 
 %wrapper "monadUserState"
@@ -46,7 +40,7 @@ state:-
 <0> \< { mkTok LT }
 <0> \<\= { mkTok LE }
 <0> \= { mkTok EQ }
-<0> \<\> { mkTok NEQ }
+<0> \<\> { mkTok NE }
 <0> \+ { mkTok PLUS }
 <0> \- { mkTok MINUS }
 <0> \* { mkTok TIMES }
@@ -119,12 +113,16 @@ data Token =
 
 -- Wrapper from monad
 
+-- definition of EOF needed by alex
+alexEOF :: Alex LexResult
+alexEOF = return (LexResult undefined EOF Nothing)
+
 -- Action
 
 data LexResult = LexResult AlexPosn Token (Maybe String)
 type Action = AlexInput -> Int -> Alex LexResult
 
-mkTok :: Token -> AlexInput -> Int -> Alex LexResult
+mkTok :: Token -> Action
 mkTok c (p, _, _, str) len = return (LexResult p c (Just (take len str)))
 
 enterNewComment, embedComment, unembedComment, enterNewString :: Action
@@ -143,7 +141,7 @@ unembedComment input len =
   do
     cd <- getCommentDepth
     setCommentDepth (cd - 1)
-    when (cd == 1) (alexStartCode 0)
+    when (cd == 1) (alexSetStartCode 0)
     skip input len
 
 enterNewString input len =
@@ -175,8 +173,13 @@ getStringVal :: Alex String
 getStringVal = Alex $ \s@AlexState{alex_ust=ust} ->
   Right(s, stringVal ust)
 
-addToString :: Char -> Alex ()
-addToString c = Alex $ \s@AlexState{alex_ust=ust} ->
-  Right (s{alex_ust=ust{stringVal=c:(stringVal ust)}}, ())
+addToLexerString :: Char -> Alex ()
+addToLexerString c = Alex $ \s@AlexState{alex_ust=ust} -> 
+  Right(s{alex_ust=ust{stringVal=c:(stringVal ust)}}, ())
 
+addToString :: Char -> Action
+addToString c _ _ =
+  do 
+    addToLexerString c
+    alexMonadScan
 }
