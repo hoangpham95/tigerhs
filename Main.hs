@@ -4,5 +4,7 @@ import Control.Monad
 
 main = do
   contents <- readFile "samples/test1.tig"
-  let toks = runAlex contents
-  mapM_ (\s -> print(fst s)) toks
+  let m = getTok contents
+  case m of 
+    Left s -> print("Lexer error: " ++ s)
+    Right toks -> mapM_ (\s@(LexResult _ c _) -> print(c)) toks

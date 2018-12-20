@@ -1,16 +1,20 @@
 {
-module TigerLexer ( runAlex ) where
+module TigerLexer ( getTok, runAlex, alexMonadScan, Token(..), LexResult(..) ) where
 
 import Prelude hiding ( GT, LT, EQ )
 import Data.Maybe
 import Control.Monad
+import Numeric ( readDec )
 }
 
 %wrapper "monadUserState"
 
 $digit = 0-9			      -- digits
 $alpha = [a-zA-Z]		    -- alphabetic characters
-$white = [ \t\n\r\f\v]  -- white space
+$white = [\ \t\b]  -- white space
+
+@id = $alpha($alpha | _ | $digit)*
+@number = $digit+
 
 state:-
 
@@ -31,6 +35,8 @@ state:-
 <0> "then" { mkTok THEN }
 <0> "if" { mkTok IF }
 <0> "array" { mkTok ARRAY }
+<0> \n ;
+<0> $white+ { skip }
 
 <0> :\= { mkTok ASSIGN }
 <0> \| { mkTok OR }
@@ -46,8 +52,8 @@ state:-
 <0> \* { mkTok TIMES }
 <0> \/ { mkTok DIVIDE }
 <0> \. { mkTok DOT }
-<0> \{ { mkTok LBRACK }
-<0> \} { mkTok RBRACK }
+<0> \[ { mkTok LBRACK }
+<0> \] { mkTok RBRACK }
 <0> \( { mkTok LPAREN }
 <0> \) { mkTok RPAREN }
 <0> \; { mkTok SEMICOLON }
@@ -58,9 +64,12 @@ state:-
 <comment> "*/" { unembedComment }
 <comment> . ;
 <comment> "\n" { skip }
-<0> \" { enterNewString `andBegin` string }
+<0> \" { enterStringState `andBegin` string }
 <string> \\n { addToString '\n' }
 <string> \\t { addToString '\t' }
+
+<0> @id { mkId }
+<0> @number { mkNumber } 
 
 {
 -- The token type:
@@ -109,7 +118,7 @@ data Token =
   | SEMICOLON
   | COLON
   | COMMA
-  deriving (Eq,Show)
+  deriving (Eq, Show)
 
 -- Wrapper from monad
 
@@ -119,13 +128,27 @@ alexEOF = return (LexResult undefined EOF Nothing)
 
 -- Action
 
-data LexResult = LexResult AlexPosn Token (Maybe String)
+data LexResult = LexResult AlexPosn Token (Maybe String) deriving (Show)
 type Action = AlexInput -> Int -> Alex LexResult
 
 mkTok :: Token -> Action
-mkTok c (p, _, _, str) len = return (LexResult p c (Just (take len str)))
+mkTok c (p, _, _, input) len = 
+  return (LexResult p c (Just s)) where 
+    s = take len input
 
-enterNewComment, embedComment, unembedComment, enterNewString :: Action
+mkId (p, _, _, input) len = return (LexResult p (ID s) (Just s)) where
+  s = (take len input)
+
+mkNumber (p, _, _, input) len = 
+  if (length r) == 1 then 
+    return (LexResult p (INT (fst (head r))) (Just s))
+  else alexError ("Lexer error: Cannot parse number")
+     
+  where 
+    s = take len input
+    r = readDec s
+
+enterNewComment, embedComment, unembedComment, enterStringState :: Action
 enterNewComment input len =
   do 
     setCommentDepth 1
@@ -144,21 +167,24 @@ unembedComment input len =
     when (cd == 1) (alexSetStartCode 0)
     skip input len
 
-enterNewString input len =
+enterStringState input len =
   do 
+    setStringState True
     skip input len
 
 -- newtype Alex a = Alex { unAlex :: AlexState -> Either String (AlexState, a) }
 
 data AlexUserState = AlexUserState {
   commentDepth :: Int,
-  stringVal  :: String
+  stringVal  :: String,
+  inStringState :: Bool
 }
 
 alexInitUserState :: AlexUserState
 alexInitUserState = AlexUserState {
   commentDepth = 0,
-  stringVal = ""
+  stringVal = "",
+  inStringState = False
 }
 
 getCommentDepth :: Alex Int
@@ -166,8 +192,12 @@ getCommentDepth =  Alex $ \s@AlexState{alex_ust=ust} ->
   Right (s, commentDepth ust) 
 
 setCommentDepth :: Int -> Alex ()
-setCommentDepth ss =  Alex $ \s@AlexState{alex_ust=ust} -> 
-  Right (s{alex_ust=ust{commentDepth=ss}}, ())
+setCommentDepth cd =  Alex $ \s@AlexState{alex_ust=ust} -> 
+  Right (s{alex_ust=ust{commentDepth=cd}}, ())
+
+setStringState :: Bool -> Alex ()
+setStringState st = Alex $ \s@AlexState{alex_ust=ust} ->
+  Right (s{alex_ust=ust{inStringState=st}}, ())
 
 getStringVal :: Alex String
 getStringVal = Alex $ \s@AlexState{alex_ust=ust} ->
@@ -182,4 +212,14 @@ addToString c _ _ =
   do 
     addToLexerString c
     alexMonadScan
+
+getTok :: String -> Either String [LexResult]
+getTok input = let loop = do tok <- alexMonadScan
+                             let t@(LexResult _ c _) = tok
+                             if (c == EOF)
+                               then return [t]
+                             else do
+                               toks <- loop
+                               return (tok : toks)
+                          in runAlex input loop
 }
